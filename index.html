@@ -131,7 +131,7 @@ table { border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabu
 <main>
   <header>
     <h1>中文数字识别实测</h1>
-    <p class="sub">拍一张写有中文数字（一至十）的照片，可以框住一个字识别，也可以整张自动找字并标注。模型直接在手机上运行，不上传照片。</p>
+    <p class="sub">拍一张写有中文数字（一至十）的照片，框住一个字即可识别<span id="subAll" hidden>，也可以整张自动找字并标注</span>。模型直接在手机上运行，不上传照片。</p>
     <span class="chip" id="modelChip">正在加载模型…</span>
   </header>
 
@@ -139,7 +139,7 @@ table { border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabu
     <h2 id="h-capture">① 拍照或选图，选择识别方式</h2>
     <div class="modes" role="group" aria-label="识别方式">
       <button id="modeSingle" aria-pressed="true">框选单字</button>
-      <button id="modeAll" aria-pressed="false">整张识别</button>
+      <button id="modeAll" aria-pressed="false" hidden>整张识别</button>
     </div>
     <div class="row">
       <span class="btn file-btn primary" style="background:var(--board);color:var(--board-ink);border-color:var(--board);font-weight:600">拍照
@@ -156,14 +156,8 @@ table { border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabu
       <div class="row" style="margin-top:10px"><button class="primary" id="btnRecognize" disabled>识别框内的字</button></div>
     </div>
     <div id="allCtl" hidden>
-      <p class="hint">自动找出照片里所有的字、逐个识别并标注。字与字之间留有空隙时效果最好；字挤在一起时可能漏检，或把两个字框成一个。识别后点照片上的任意一个框，可以查看这个字的前三名。</p>
+      <p class="hint">用 YOLO 检测模型自动找出照片里所有的字，逐个识别并标注。字与字之间留有空隙时效果最好。识别后点照片上的任意一个框，可以查看这个字的前三名。</p>
       <p class="note" id="detNote" hidden></p>
-      <div class="row" style="margin-top:10px">
-        <label class="field" for="detector" id="detectorField" hidden>找字方法
-          <select id="detector"><option value="classical">传统分割（无需训练）</option><option value="yolo">YOLO 检测模型</option></select></label>
-        <label class="range" for="merge" id="mergeField">笔画合并距离
-          <input id="merge" type="range" min="0.2" max="1" step="0.05" value="0.45"><output id="mergeOut">0.45</output></label>
-      </div>
       <div class="row" style="margin-top:10px"><button class="primary" id="btnAll" disabled>识别整张照片</button><span class="progress" id="progress"></span></div>
     </div>
   </section>
@@ -556,92 +550,6 @@ $("btnRecognize").addEventListener("click", () => {
   showResult(r, performance.now() - t0);
 });
 
-/* ---------- 整张识别：传统分割（与 segment.py 的步骤一致） ---------- */
-function otsu(hist, total) {
-  let sumAll = 0; for (let t = 0; t < 256; t++) sumAll += t * hist[t];
-  let w0 = 0, s0 = 0, best = -1, thr = 0;
-  for (let t = 0; t < 256; t++) {
-    w0 += hist[t]; if (w0 === 0 || w0 === total) continue;
-    s0 += t * hist[t]; const m0 = s0 / w0, m1 = (sumAll - s0) / (total - w0), b = w0 * (total - w0) * (m0 - m1) ** 2;
-    if (b > best) { best = b; thr = t; }
-  }
-  return thr;
-}
-function segmentJS(g, w, h, merge, stack) {
-  const B = 16, gw = Math.ceil(w / B), gh = Math.ceil(h / B), small = new Float32Array(gw * gh);
-  for (let by = 0; by < gh; by++) for (let bx = 0; bx < gw; bx++) {
-    let s = 0;
-    for (let yy = 0; yy < B; yy++) { const row = Math.min(by * B + yy, h - 1) * w;
-      for (let xx = 0; xx < B; xx++) s += g[row + Math.min(bx * B + xx, w - 1)]; }
-    small[by * gw + bx] = s / (B * B);
-  }
-  const bg = new Float32Array(gw * gh), win = new Float32Array(25);
-  for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
-    let k = 0;
-    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++)
-      win[k++] = small[Math.min(Math.max(y + dy, 0), gh - 1) * gw + Math.min(Math.max(x + dx, 0), gw - 1)];
-    win.sort(); bg[y * gw + x] = win[12];
-  }
-  const hist = new Float64Array(256); for (let i = 0; i < g.length; i++) hist[g[i]]++;
-  const n = g.length; let acc = 0, lo = -1, hi = -1;
-  for (let t = 0; t < 256; t++) { acc += hist[t]; if (lo < 0 && acc > (n - 1) / 2 - 0.5) lo = t; if (hi < 0 && acc > n / 2) { hi = t; break; } }
-  const light = (n % 2 ? lo : (lo + hi) / 2) > 127;
-  const ink = new Uint8Array(n), ih = new Float64Array(256);
-  for (let y = 0; y < h; y++) { const brow = Math.floor(y / B) * gw;
-    for (let x = 0; x < w; x++) { const b = bg[brow + Math.floor(x / B)], v = light ? b - g[y * w + x] : g[y * w + x] - b;
-      const q = v <= 0 ? 0 : v >= 255 ? 255 : Math.floor(v); ink[y * w + x] = q; ih[q]++; } }
-  const thr = Math.max(18, otsu(ih, n));
-  // 8 邻域连通域（两遍扫描 + 并查集）
-  const lab = new Int32Array(n); let parent = new Int32Array(1024), next = 1;
-  const find = (a) => { while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; };
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const i = y * w + x; if (ink[i] <= thr) continue;
-    let m = 0; const nb = [];
-    if (x > 0 && lab[i - 1]) nb.push(lab[i - 1]);
-    if (y > 0) { if (x > 0 && lab[i - w - 1]) nb.push(lab[i - w - 1]); if (lab[i - w]) nb.push(lab[i - w]); if (x < w - 1 && lab[i - w + 1]) nb.push(lab[i - w + 1]); }
-    if (!nb.length) {
-      if (next >= parent.length) { const p2 = new Int32Array(parent.length * 2); p2.set(parent); parent = p2; }
-      parent[next] = next; lab[i] = next++; continue;
-    }
-    for (const l of nb) { const r = find(l); m = m ? Math.min(m, r) : r; }
-    for (const l of nb) { const r = find(l); if (r !== m) parent[r] = m; }
-    lab[i] = m;
-  }
-  const stats = new Map();
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const l = lab[y * w + x]; if (!l) continue; const r = find(l);
-    let s = stats.get(r); if (!s) { s = [x, y, x, y, 0]; stats.set(r, s); }
-    if (x < s[0]) s[0] = x; if (y < s[1]) s[1] = y; if (x > s[2]) s[2] = x; if (y > s[3]) s[3] = y; s[4]++;
-  }
-  let comps = [...stats.values()].filter((c) => c[4] >= 6);
-  if (!comps.length) return [];
-  const size = (c) => Math.max(c[2] - c[0], c[3] - c[1]) + 1;
-  const big = comps.filter((c) => c[4] >= 20).map(size), base = big.length ? big : comps.map(size);
-  const sorted = Float64Array.from(base).sort(), sz = percentile(sorted, 50);
-  comps = comps.filter((c) => size(c) >= 0.12 * sz);
-  let boxes = comps.map((c) => c.slice(0, 4));
-  const gap = merge * sz, vgap = stack * sz;
-  let changed = true;
-  while (changed) {
-    changed = false; const out = [];
-    for (const b of boxes) {
-      let merged = false;
-      for (const o of out) {
-        const gx = Math.max(0, Math.max(b[0], o[0]) - Math.min(b[2], o[2])), gy = Math.max(0, Math.max(b[1], o[1]) - Math.min(b[3], o[3]));
-        const ovx = Math.min(b[2], o[2]) - Math.max(b[0], o[0]), stacked = ovx > 0.3 * Math.min(b[2] - b[0], o[2] - o[0]) + 1e-6;
-        if ((stacked && gy <= vgap) || (gx <= gap && gy <= gap)) {
-          o[0] = Math.min(o[0], b[0]); o[1] = Math.min(o[1], b[1]); o[2] = Math.max(o[2], b[2]); o[3] = Math.max(o[3], b[3]);
-          changed = merged = true; break;
-        }
-      }
-      if (!merged) out.push(b.slice());
-    }
-    boxes = out;
-  }
-  return boxes.filter((b) => { const m = Math.max(b[2] - b[0], b[3] - b[1]) + 1; return m >= 0.35 * sz && m <= 4 * sz; })
-    .map((b) => [b[0], b[1], b[2] + 1, b[3] + 1]);
-}
-
 /* ---------- 整张识别：YOLO 检测（仅在附带检测模型的网页版里可用） ---------- */
 async function detectYOLO() {
   const S = window.DETECTOR_SIZE || 640, r = Math.min(S / PHOTO.w, S / PHOTO.h), nw = Math.round(PHOTO.w * r), nh = Math.round(PHOTO.h * r);
@@ -690,11 +598,8 @@ async function recognizeAll() {
   const t0 = performance.now();
   try {
     $("progress").textContent = "正在找字…"; await nextFrame();
-    const useYolo = DETECTOR && $("detector").value === "yolo";
-    let boxes;
-    if (useYolo) boxes = await detectYOLO();
-    else { const d = PHOTO.canvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, PHOTO.w, PHOTO.h);
-      boxes = segmentJS(grayFromImageData(d), PHOTO.w, PHOTO.h, parseFloat($("merge").value), 0.8 * parseFloat($("merge").value) / 0.45); }
+    if (!DETECTOR) { $("progress").textContent = "YOLO 检测模型还没有加载好，请稍候。"; return; }
+    const boxes = await detectYOLO();
     const tDet = performance.now() - t0;
     DETS = [];
     for (let k = 0; k < boxes.length; k++) {
@@ -704,7 +609,7 @@ async function recognizeAll() {
       if (k % 4 === 3) { $("progress").textContent = `正在识别 ${k + 1}/${boxes.length}…`; drawView(); await nextFrame(); }
     }
     const total = performance.now() - t0;
-    drawView(); renderAll(useYolo ? "YOLO 检测" : "传统分割", tDet, total);
+    drawView(); renderAll("YOLO 检测", tDet, total);
     $("progress").textContent = "";
   } catch (e) {
     $("progress").textContent = "识别失败：" + e.message;
@@ -746,14 +651,13 @@ function setMode(m) {
 $("modeSingle").addEventListener("click", () => setMode("single"));
 $("modeAll").addEventListener("click", () => setMode("all"));
 $("btnAll").addEventListener("click", recognizeAll);
-$("merge").addEventListener("input", () => { $("mergeOut").textContent = parseFloat($("merge").value).toFixed(2); });
-$("detector").addEventListener("change", () => { $("mergeField").hidden = $("detector").value === "yolo"; });
 async function loadDetector() {
-  if (!window.DETECTOR_URL) return;            // 离线单文件版：只有传统分割
+  if (!window.DETECTOR_URL) return;            // 离线单文件版：只有框选单字
+  $("modeAll").hidden = false; $("subAll").hidden = false;
   const note = $("detNote"); note.hidden = false;
-  if (typeof ort === "undefined") { note.textContent = "YOLO 运行库没有加载成功，暂时只能用传统分割。请刷新页面重试。"; return; }
+  if (typeof ort === "undefined") { note.textContent = "YOLO 运行库没有加载成功，整张识别暂时不可用，请刷新页面重试。框选单字不受影响。"; return; }
   const simd = (() => { try { return WebAssembly.validate(new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,3,2,1,0,10,10,1,8,0,65,0,253,15,253,98,11])); } catch { return false; } })();
-  if (!simd) { note.textContent = "这个浏览器内核太旧（不支持 WebAssembly SIMD），无法运行 YOLO，暂时只能用传统分割。请换用 Chrome、Edge 或手机自带的新版浏览器打开本网址。"; return; }
+  if (!simd) { note.textContent = "这个浏览器内核太旧（不支持 WebAssembly SIMD），无法运行 YOLO，整张识别不可用。请换用 Chrome、Edge 或手机自带的新版浏览器打开本网址。"; return; }
   const t0 = performance.now();
   // 逐个镜像下载，带进度、卡住超时和重试；国内访问 github.io 大文件容易中断
   const fetchBuf = async (label, urls) => {
@@ -784,11 +688,10 @@ async function loadDetector() {
     note.textContent = "YOLO 检测模型初始化中…";
     ort.env.wasm.wasmPaths = base; ort.env.wasm.numThreads = 1; ort.env.wasm.wasmBinary = wasm.buffer;
     DETECTOR = await ort.InferenceSession.create(model, { executionProviders: ["wasm"] });
-    $("detectorField").hidden = false; $("detector").value = "yolo"; $("mergeField").hidden = true;
     note.textContent = `YOLO 检测模型已就绪（加载 ${((performance.now() - t0) / 1000).toFixed(1)} 秒）。`;
   } catch (e) {
     console.warn("检测模型加载失败", e);
-    note.textContent = "YOLO 加载失败，暂时只能用传统分割。可以换个网络（Wi-Fi / 流量）后刷新重试。原因：" + String((e && e.message) || e).slice(0, 200);
+    note.textContent = "YOLO 加载失败，整张识别暂时不可用，可以换个网络（Wi-Fi / 流量）后刷新重试。框选单字不受影响。原因：" + String((e && e.message) || e).slice(0, 200);
   }
 
 }
