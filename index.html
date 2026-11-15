@@ -54,6 +54,12 @@ h2 { font-size: 15px; margin: 0; letter-spacing: .04em; }
 .chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 section { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px;
   display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.test-only { display: none !important; }
+body.testing .test-only { display: flex !important; }
+body.testing .test-only[hidden] { display: none !important; }
+.test-toggle { flex-direction: row; align-items: flex-start; gap: 10px; padding: 12px 14px; cursor: pointer; }
+.test-toggle input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--board); flex: none; }
+.test-toggle b { font-size: 14px; } .test-toggle span { color: var(--muted); font-size: 12.5px; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 button, .btn {
   font: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--surface); color: var(--ink);
@@ -125,7 +131,7 @@ table { border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabu
 <main>
   <header>
     <h1>中文数字识别实测</h1>
-    <p class="sub">拍一张写有中文数字（一至十）的照片，可以框住一个字识别，也可以整张自动找字并标注。模型直接在手机上运行；每次识别后点选真实答案，自动统计实测准确率。</p>
+    <p class="sub">拍一张写有中文数字（一至十）的照片，可以框住一个字识别，也可以整张自动找字并标注。模型直接在手机上运行，不上传照片。</p>
     <span class="chip" id="modelChip">正在加载模型…</span>
   </header>
 
@@ -150,7 +156,7 @@ table { border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabu
       <div class="row" style="margin-top:10px"><button class="primary" id="btnRecognize" disabled>识别框内的字</button></div>
     </div>
     <div id="allCtl" hidden>
-      <p class="hint">自动找出照片里所有的字、逐个识别并标注。字与字之间留有空隙时效果最好；字挤在一起时可能漏检，或把两个字框成一个。识别后点照片上的任意一个框，可以查看这个字的前三名并记录真实答案。</p>
+      <p class="hint">自动找出照片里所有的字、逐个识别并标注。字与字之间留有空隙时效果最好；字挤在一起时可能漏检，或把两个字框成一个。识别后点照片上的任意一个框，可以查看这个字的前三名。</p>
       <div class="row" style="margin-top:10px">
         <label class="field" for="detector" id="detectorField" hidden>找字方法
           <select id="detector"><option value="classical">传统分割（无需训练）</option><option value="yolo">YOLO 检测模型</option></select></label>
@@ -178,7 +184,12 @@ table { border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabu
       <span>模型实际看到的输入（32×32，已统一为黑底白字并裁剪居中）。用时 <b id="ms">–</b> 毫秒。</span></div>
   </section>
 
-  <section aria-labelledby="h-record" id="recordSec" hidden>
+  <label class="test-toggle" for="testMode" id="testToggle" style="background:var(--surface);border:1px solid var(--line);border-radius:var(--r);display:flex">
+    <input type="checkbox" id="testMode">
+    <span><b>实测模式</b><br>打开后，每次识别都可以点选真实答案，页面自动统计准确率、置信区间和混淆矩阵，并可导出记录。只看识别结果不用打开。</span>
+  </label>
+
+  <section aria-labelledby="h-record" id="recordSec" class="test-only" hidden>
     <h2 id="h-record">③ 这个字实际是？点一下即记录</h2>
     <div class="row">
       <label class="field" for="writer">书写者编号
@@ -190,7 +201,7 @@ table { border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabu
     <p class="hint">带粗边框的是模型的预测。预测正确就点它，错了就点真实的那个字。</p>
   </section>
 
-  <section aria-labelledby="h-stats">
+  <section aria-labelledby="h-stats" class="test-only">
     <h2 id="h-stats">④ 实测统计</h2>
     <p class="note" id="storeNote">正在连接记录库…</p>
     <div class="stats">
@@ -218,6 +229,12 @@ table { border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabu
 "use strict";
 const NAMES = "一二三四五六七八九十".split("");
 const $ = (id) => document.getElementById(id);
+function setTesting(on) {
+  document.body.classList.toggle("testing", on); $("testMode").checked = on;
+  try { localStorage.setItem("testMode", on ? "1" : "0"); } catch {}
+}
+$("testMode").addEventListener("change", (e) => { setTesting(e.target.checked); if (e.target.checked) $("testToggle").scrollIntoView({ behavior: "smooth", block: "start" }); });
+try { setTesting(localStorage.getItem("testMode") === "1"); } catch { setTesting(false); }
 
 /* ======================= PIL 兼容的缩放（与训练时 Pillow 的结果逐像素一致） ======================= */
 const PRECISION_BITS = 22;
