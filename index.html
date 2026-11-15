@@ -157,6 +157,7 @@ table { border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabu
     </div>
     <div id="allCtl" hidden>
       <p class="hint">自动找出照片里所有的字、逐个识别并标注。字与字之间留有空隙时效果最好；字挤在一起时可能漏检，或把两个字框成一个。识别后点照片上的任意一个框，可以查看这个字的前三名。</p>
+      <p class="note" id="detNote" hidden></p>
       <div class="row" style="margin-top:10px">
         <label class="field" for="detector" id="detectorField" hidden>找字方法
           <select id="detector"><option value="classical">传统分割（无需训练）</option><option value="yolo">YOLO 检测模型</option></select></label>
@@ -745,12 +746,22 @@ $("btnAll").addEventListener("click", recognizeAll);
 $("merge").addEventListener("input", () => { $("mergeOut").textContent = parseFloat($("merge").value).toFixed(2); });
 $("detector").addEventListener("change", () => { $("mergeField").hidden = $("detector").value === "yolo"; });
 async function loadDetector() {
-  if (typeof ort === "undefined" || !window.DETECTOR_URL) return;
+  if (!window.DETECTOR_URL) return;            // 离线单文件版：只有传统分割
+  const note = $("detNote"); note.hidden = false;
+  if (typeof ort === "undefined") { note.textContent = "YOLO 运行库没有加载成功，暂时只能用传统分割。请刷新页面重试。"; return; }
+  const simd = (() => { try { return WebAssembly.validate(new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,3,2,1,0,10,10,1,8,0,65,0,253,15,253,98,11])); } catch { return false; } })();
+  if (!simd) { note.textContent = "这个浏览器内核太旧（不支持 WebAssembly SIMD），无法运行 YOLO，暂时只能用传统分割。请换用 Chrome、Edge 或手机自带的新版浏览器打开本网址。"; return; }
+  const t0 = performance.now();
+  note.textContent = "YOLO 检测模型加载中…（约 22 MB，首次打开需要等一会儿，之后会缓存）";
   try {
     ort.env.wasm.wasmPaths = window.ORT_WASM_PATH || "./"; ort.env.wasm.numThreads = 1;
     DETECTOR = await ort.InferenceSession.create(window.DETECTOR_URL, { executionProviders: ["wasm"] });
     $("detectorField").hidden = false; $("detector").value = "yolo"; $("mergeField").hidden = true;
-  } catch (e) { console.warn("检测模型加载失败", e); }
+    note.textContent = `YOLO 检测模型已就绪（加载 ${((performance.now() - t0) / 1000).toFixed(1)} 秒）。`;
+  } catch (e) {
+    console.warn("检测模型加载失败", e);
+    note.textContent = "YOLO 加载失败，暂时只能用传统分割。可以刷新重试，或换用 Chrome / Edge 打开。错误信息：" + String((e && e.message) || e).slice(0, 160);
+  }
 }
 
 /* ======================= 记录与统计 ======================= */
